@@ -1487,7 +1487,8 @@ static int vc4_hdmi_cec_init(struct vc4_hdmi *vc4_hdmi)
 {
 	struct cec_connector_info conn_info;
 	struct platform_device *pdev = vc4_hdmi->pdev;
-	u32 value;
+	struct device *dev = &pdev->dev;
+	unsigned long flags;
 	int ret;
 
 	if (!vc4_hdmi->variant->cec_available)
@@ -1504,21 +1505,32 @@ static int vc4_hdmi_cec_init(struct vc4_hdmi *vc4_hdmi)
 	cec_fill_conn_info_from_drm(&conn_info, &vc4_hdmi->connector);
 	cec_s_conn_info(vc4_hdmi->cec_adap, &conn_info);
 
-	HDMI_WRITE(HDMI_CEC_CPU_MASK_SET, 0xffffffff);
+	if (vc4_hdmi->variant->external_irq_controller) {
+		ret = request_threaded_irq(platform_get_irq_byname(pdev, "cec-rx"),
+					   vc4_cec_irq_handler_rx_bare,
+					   vc4_cec_irq_handler_rx_thread, 0,
+					   "vc4 hdmi cec rx", vc4_hdmi);
+		if (ret)
+			goto err_delete_cec_adap;
 
-	value = HDMI_READ(HDMI_CEC_CNTRL_1);
-	/* Set the logical address to Unregistered */
-	value |= VC4_HDMI_CEC_ADDR_MASK;
-	HDMI_WRITE(HDMI_CEC_CNTRL_1, value);
+		ret = request_threaded_irq(platform_get_irq_byname(pdev, "cec-tx"),
+					   vc4_cec_irq_handler_tx_bare,
+					   vc4_cec_irq_handler_tx_thread, 0,
+					   "vc4 hdmi cec tx", vc4_hdmi);
+		if (ret)
+			goto err_remove_cec_rx_handler;
+	} else {
+		spin_lock_irqsave(&vc4_hdmi->hw_lock, flags);
+		HDMI_WRITE(HDMI_CEC_CPU_MASK_SET, 0xffffffff);
+		spin_unlock_irqrestore(&vc4_hdmi->hw_lock, flags);
 
-	vc4_hdmi_cec_update_clk_div(vc4_hdmi);
-
-	ret = devm_request_threaded_irq(&pdev->dev, platform_get_irq(pdev, 0),
-					vc4_cec_irq_handler,
-					vc4_cec_irq_handler_thread, 0,
-					"vc4 hdmi cec", vc4_hdmi);
-	if (ret)
-		goto err_delete_cec_adap;
+		ret = request_threaded_irq(platform_get_irq(pdev, 0),
+					   vc4_cec_irq_handler,
+					   vc4_cec_irq_handler_thread, 0,
+					   "vc4 hdmi cec", vc4_hdmi);
+		if (ret)
+			goto err_delete_cec_adap;
+	}
 
 	ret = cec_register_adapter(vc4_hdmi->cec_adap, &pdev->dev);
 	if (ret < 0)
@@ -1536,6 +1548,29 @@ static void vc4_hdmi_cec_exit(struct vc4_hdmi *vc4_hdmi)
 {
 	cec_unregister_adapter(vc4_hdmi->cec_adap);
 }
+
+static int vc4_hdmi_cec_resume(struct vc4_hdmi *vc4_hdmi)
+{
+	unsigned long flags;
+	u32 value;
+
+	spin_lock_irqsave(&vc4_hdmi->hw_lock, flags);
+	value = HDMI_READ(HDMI_CEC_CNTRL_1);
+	/* Set the logical address to Unregistered */
+	value |= VC4_HDMI_CEC_ADDR_MASK;
+	HDMI_WRITE(HDMI_CEC_CNTRL_1, value);
+	spin_unlock_irqrestore(&vc4_hdmi->hw_lock, flags);
+
+	vc4_hdmi_cec_update_clk_div(vc4_hdmi);
+
+	if (!vc4_hdmi->variant->external_irq_controller) {
+		spin_lock_irqsave(&vc4_hdmi->hw_lock, flags);
+		HDMI_WRITE(HDMI_CEC_CPU_MASK_SET, 0xffffffff);
+		spin_unlock_irqrestore(&vc4_hdmi->hw_lock, flags);
+	}
+
+	return 0;
+}
 #else
 static int vc4_hdmi_cec_init(struct vc4_hdmi *vc4_hdmi)
 {
@@ -1544,6 +1579,10 @@ static int vc4_hdmi_cec_init(struct vc4_hdmi *vc4_hdmi)
 
 static void vc4_hdmi_cec_exit(struct vc4_hdmi *vc4_hdmi) {};
 
+static void vc4_hdmi_cec_resume(struct vc4_hdmi *vc4_hdmi)
+{
+	return 0;
+}
 #endif
 
 static int vc4_hdmi_build_regset(struct vc4_hdmi *vc4_hdmi,
@@ -1739,6 +1778,15 @@ static int vc4_hdmi_runtime_resume(struct device *dev)
 	if (ret)
 		return ret;
 
+	if (vc4_hdmi->variant->reset)
+		vc4_hdmi->variant->reset(vc4_hdmi);
+
+	ret = vc4_hdmi_cec_resume(vc4_hdmi);
+	if (ret) {
+		clk_disable_unprepare(vc4_hdmi->hsm_clock);
+		return ret;
+	}
+
 	return 0;
 }
 #endif
@@ -1806,8 +1854,45 @@ static int vc4_hdmi_bind(struct device *dev, struct device *master, void *data)
 	vc4_hdmi->disable_wifi_frequencies =
 		of_property_read_bool(dev->of_node, "wifi-2.4ghz-coexistence");
 
-	if (vc4_hdmi->variant->reset)
-		vc4_hdmi->variant->reset(vc4_hdmi);
+	if (variant->max_pixel_clock == 600000000) {
+		struct vc4_dev *vc4 = to_vc4_dev(drm);
+		long max_rate = clk_round_rate(vc4->hvs->core_clk, 550000000);
+
+		if (max_rate < 550000000)
+			vc4_hdmi->disable_4kp60 = true;
+	}
+
+	/*
+	 * If we boot without any cable connected to the HDMI connector,
+	 * the firmware will skip the HSM initialization and leave it
+	 * with a rate of 0, resulting in a bus lockup when we're
+	 * accessing the registers even if it's enabled.
+	 *
+	 * Let's put a sensible default at runtime_resume so that we
+	 * don't end up in this situation.
+	 *
+	 * Strictly speaking we should be using clk_set_min_rate.
+	 * However, the clk-bcm2835 clock driver favors clock rates
+	 * under the expected rate, which in the case where we set the
+	 * minimum clock rate will be rejected by the clock framework.
+	 *
+	 * However, even for the two HDMI controllers found on the
+	 * BCM2711, using clk_set_rate doesn't cause any issue. Indeed,
+	 * the bind callbacks are called in sequence, and before the DRM
+	 * device is registered and therefore a mode is set. As such,
+	 * we're not at risk of having the first controller set a
+	 * different mode and then the second overriding the HSM clock
+	 * frequency in its bind.
+	 */
+	ret = clk_set_rate(vc4_hdmi->hsm_clock, HSM_MIN_CLOCK_FREQ);
+	if (ret)
+		goto err_put_ddc;
+
+	pm_runtime_enable(dev);
+
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret)
+		goto err_put_ddc;
 
 	if ((of_device_is_compatible(dev->of_node, "brcm,bcm2711-hdmi0") ||
 	     of_device_is_compatible(dev->of_node, "brcm,bcm2711-hdmi1")) &&
