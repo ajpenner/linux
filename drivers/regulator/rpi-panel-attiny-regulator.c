@@ -116,6 +116,78 @@ static const struct backlight_ops attiny_bl = {
 	.get_brightness	= attiny_get_brightness,
 };
 
+static int attiny_gpio_get_direction(struct gpio_chip *gc, unsigned int off)
+{
+	return GPIO_LINE_DIRECTION_OUT;
+}
+
+static void attiny_gpio_set(struct gpio_chip *gc, unsigned int off, int val)
+{
+	struct attiny_lcd *state = gpiochip_get_data(gc);
+	u8 last_val;
+
+	if (off >= NUM_GPIO)
+		return;
+
+	mutex_lock(&state->lock);
+
+	last_val = attiny_get_port_state(state, mappings[off].reg);
+	if (val)
+		last_val |= mappings[off].mask;
+	else
+		last_val &= ~mappings[off].mask;
+
+	attiny_set_port_state(state, mappings[off].reg, last_val);
+
+	if (off == RST_BRIDGE_N && val) {
+		usleep_range(5000, 8000);
+		regmap_write(state->regmap, REG_ADDR_H, 0x04);
+		usleep_range(5000, 8000);
+		regmap_write(state->regmap, REG_ADDR_L, 0x7c);
+		usleep_range(5000, 8000);
+		regmap_write(state->regmap, REG_WRITE_DATA_H, 0x00);
+		usleep_range(5000, 8000);
+		regmap_write(state->regmap, REG_WRITE_DATA_L, 0x00);
+
+		msleep(100);
+	}
+
+	mutex_unlock(&state->lock);
+}
+
+static int attiny_i2c_read(struct i2c_client *client, u8 reg, unsigned int *buf)
+{
+	struct i2c_msg msgs[1];
+	u8 addr_buf[1] = { reg };
+	u8 data_buf[1] = { 0, };
+	int ret;
+
+	/* Write register address */
+	msgs[0].addr = client->addr;
+	msgs[0].flags = 0;
+	msgs[0].len = ARRAY_SIZE(addr_buf);
+	msgs[0].buf = addr_buf;
+
+	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+	if (ret != ARRAY_SIZE(msgs))
+		return -EIO;
+
+	usleep_range(5000, 10000);
+
+	/* Read data from register */
+	msgs[0].addr = client->addr;
+	msgs[0].flags = I2C_M_RD;
+	msgs[0].len = 1;
+	msgs[0].buf = data_buf;
+
+	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+	if (ret != ARRAY_SIZE(msgs))
+		return -EIO;
+
+	*buf = data_buf[0];
+	return 0;
+}
+
 /*
  * I2C driver interface functions
  */
@@ -138,7 +210,7 @@ static int attiny_i2c_probe(struct i2c_client *i2c,
 		return ret;
 	}
 
-	ret = regmap_read(regmap, REG_ID, &data);
+	ret = attiny_i2c_read(i2c, REG_ID, &data);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to read REG_ID reg: %d\n", ret);
 		return ret;
