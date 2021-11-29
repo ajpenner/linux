@@ -63,21 +63,9 @@ static int attiny_lcd_power_disable(struct regulator_dev *rdev)
 
 static int attiny_lcd_power_is_enabled(struct regulator_dev *rdev)
 {
-	unsigned int data;
-	int ret;
+	struct attiny_lcd *state = rdev_get_drvdata(rdev);
 
-	ret = regmap_read(rdev->regmap, REG_POWERON, &data);
-	if (ret < 0)
-		return ret;
-
-	if (!(data & BIT(0)))
-		return 0;
-
-	ret = regmap_read(rdev->regmap, REG_PORTB, &data);
-	if (ret < 0)
-		return ret;
-
-	return data & BIT(0);
+	return state->port_states[REG_PORTC - REG_PORTA] & PC_RST_BRIDGE_N;
 }
 
 static const struct regulator_init_data attiny_regulator_default = {
