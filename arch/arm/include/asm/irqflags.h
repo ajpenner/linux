@@ -174,13 +174,28 @@ static inline unsigned long native_save_flags(void)
 }
 
 /*
- * restore saved IRQ & FIQ state
+ * restore saved IRQe
+
+ Merge wanted this header
+ #define arch_local_irq_restore arch_local_irq_restore
+ static inline void arch_local_irq_restore(unsigned long flags)
+ {
  */
 #define arch_local_irq_restore arch_local_irq_restore
 static inline void native_irq_restore(unsigned long flags)
 {
-	asm volatile(
-		"	msr	" IRQMASK_REG_NAME_W ", %0	@ native_irq_restore"
+	unsigned long temp = 0;
+	flags &= ~(1 << 6);
+	asm volatile (
+		" mrs %0, cpsr"
+		: "=r" (temp)
+		:
+		: "memory", "cc");
+		/* Preserve FIQ bit */
+		temp &= (1 << 6);
+		flags = flags | temp;
+	asm volatile (
+		"    msr    cpsr_c, %0    @ local_irq_restore"
 		:
 		: "r" (flags)
 		: "memory", "cc");
