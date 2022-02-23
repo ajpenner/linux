@@ -1,0 +1,99 @@
+--- drivers/dma/bcm2835-dma.c
++++ drivers/dma/bcm2835-dma.c
+@@ -458,10 +469,41 @@ static void bcm2835_dma_start_desc(struct bcm2835_chan *c)
+ 
+ 	list_del(&vd->node);
+ 
+-	c->desc = d = to_bcm2835_dma_desc(&vd->tx);
++	c->desc = to_bcm2835_dma_desc(&vd->tx);
++	if (!bcm2835_dma_oob_capable() || !vchan_oob_pulsed(vd))
++		bcm2835_dma_enable_channel(c);
++}
+ 
+-	writel(d->cb_list[0].paddr, c->chan_base + BCM2835_DMA_ADDR);
+-	writel(BCM2835_DMA_ACTIVE, c->chan_base + BCM2835_DMA_CS);
++static bool do_channel(struct bcm2835_chan *c, struct bcm2835_desc *d)
++{
++	struct dmaengine_desc_callback cb;
++
++	if (running_oob()) {
++		if (!vchan_oob_handled(&d->vd))
++			return false;
++		dmaengine_desc_get_callback(&d->vd.tx, &cb);
++		if (dmaengine_desc_callback_valid(&cb)) {
++			vchan_unlock(&c->vc);
++			dmaengine_desc_callback_invoke(&cb, NULL);
++			vchan_lock(&c->vc);
++		}
++		return true;
++	}
++
++	if (d->cyclic) {
++		/* call the cyclic callback */
++		vchan_cyclic_callback(&d->vd);
++	} else if (!readl(c->chan_base + BCM2835_DMA_ADDR)) {
++		vchan_cookie_complete(&c->desc->vd);
++		bcm2835_dma_start_desc(c);
++	}
++
++	return true;
++}
++
++static inline bool is_base_irq_handler(void)
++{
++	return !bcm2835_dma_oob_capable() || running_oob();
+ }
+ 
+ static irqreturn_t bcm2835_dma_callback(int irq, void *data)
+@@ -489,22 +532,27 @@ static irqreturn_t bcm2835_dma_callback(int irq, void *data)
+ 	 * if this IRQ handler is threaded.) If the channel is finished, it
+ 	 * will remain idle despite the ACTIVE flag being set.
+ 	 */
+-	writel(BCM2835_DMA_INT | BCM2835_DMA_ACTIVE,
+-	       c->chan_base + BCM2835_DMA_CS);
++	if (is_base_irq_handler())
++		writel(BCM2835_DMA_INT | BCM2835_DMA_ACTIVE,
++			c->chan_base + BCM2835_DMA_CS);
+ 
+ 	d = c->desc;
++	if (!d)
++		goto out;
+ 
+-	if (d) {
+-		if (d->cyclic) {
+-			/* call the cyclic callback */
+-			vchan_cyclic_callback(&d->vd);
+-		} else if (!readl(c->chan_base + BCM2835_DMA_ADDR)) {
+-			vchan_cookie_complete(&c->desc->vd);
+-			bcm2835_dma_start_desc(c);
+-		}
++	if (bcm2835_dma_oob_capable() && running_oob()) {
++		/*
++		 * If we cannot process this from the out-of-band
++		 * stage, schedule a callback from in-band context.
++		 */
++		if (!do_channel(c, d))
++			irq_post_inband(irq);
++	} else {
++		do_channel(c, d);
+ 	}
+ 
+-	spin_unlock_irqrestore(&c->vc.lock, flags);
++out:
++	vchan_unlock_irqrestore(&c->vc, flags);
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -1042,10 +1138,10 @@ static int bcm2835_dma_probe(struct platform_device *pdev)
+ 			continue;
+ 
+ 		/* check if there are other channels that also use this irq */
+-		irq_flags = 0;
++		irq_flags = IS_ENABLED(CONFIG_DMA_BCM2835_OOB) ? IRQF_OOB : 0;
+ 		for (j = 0; j <= BCM2835_DMA_MAX_DMA_CHAN_SUPPORTED; j++)
+ 			if ((i != j) && (irq[j] == irq[i])) {
+-				irq_flags = IRQF_SHARED;
++				irq_flags |= IRQF_SHARED;
+ 				break;
+ 			}
+ 

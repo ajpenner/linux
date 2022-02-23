@@ -1,0 +1,34 @@
+patching file arch/arm/include/asm/irqflags.h
+Hunk #7 FAILED at 177.
+1 out of 7 hunks FAILED -- saving rejects to file arch/arm/include/asm/irqflags.h.rej
+patching file arch/arm/kernel/Makefile
+Hunk #1 FAILED at 92.
+1 out of 1 hunk FAILED -- saving rejects to file arch/arm/kernel/Makefile.rej
+patching file drivers/dma/bcm2835-dma.c
+Hunk #1 succeeded at 30 (offset 1 line).
+Hunk #2 succeeded at 666 (offset 230 lines).
+Hunk #3 FAILED at 458.
+Hunk #4 succeeded at 709 (offset 238 lines).
+Hunk #5 succeeded at 717 (offset 238 lines).
+Hunk #6 FAILED at 489.
+Hunk #7 succeeded at 821 (offset 238 lines).
+Hunk #8 succeeded at 850 (offset 246 lines).
+Hunk #9 succeeded at 860 (offset 246 lines).
+Hunk #10 succeeded at 933 (offset 248 lines).
+Hunk #11 succeeded at 1017 (offset 258 lines).
+Hunk #12 succeeded at 1116 (offset 267 lines).
+Hunk #13 succeeded at 1126 (offset 267 lines).
+Hunk #14 succeeded at 1307 (offset 337 lines).
+Hunk #15 FAILED at 1042.
+3 out of 15 hunks FAILED -- saving rejects to file drivers/dma/bcm2835-dma.c.rej
+patching file drivers/gpio/gpiolib.c
+Hunk #1 succeeded at 3041 (offset 2 lines).
+patching file drivers/irqchip/irq-bcm2835.c
+Hunk #1 FAILED at 102.
+1 out of 1 hunk FAILED -- saving rejects to file drivers/irqchip/irq-bcm2835.c.rej
+patching file drivers/spi/spi-bcm2835.c
+Hunk #1 FAILED at 1079.
+Hunk #2 succeeded at 1118 (offset 15 lines).
+Hunk #3 succeeded at 1312 (offset 15 lines).
+Hunk #4 succeeded at 1400 (offset 20 lines).
+1 out of 4 hunks FAILED -- saving rejects to file drivers/spi/spi-bcm2835.c.rej

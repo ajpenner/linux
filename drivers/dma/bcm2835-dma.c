@@ -30,6 +30,7 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/spinlock.h>
+#include <linux/irqstage.h>
 #include <linux/of.h>
 #include <linux/of_dma.h>
 
@@ -665,10 +666,20 @@ static void bcm2835_dma_abort(struct bcm2835_chan *c)
 	writel(BCM2835_DMA_RESET, chan_base + BCM2835_DMA_CS);
 }
 
+static inline void bcm2835_dma_enable_channel(struct bcm2835_chan *c)
+{
+	writel(c->desc->cb_list[0].paddr, c->chan_base + BCM2835_DMA_ADDR);
+	writel(BCM2835_DMA_ACTIVE, c->chan_base + BCM2835_DMA_CS);
+}
+
+static inline bool bcm2835_dma_oob_capable(void)
+{
+	return IS_ENABLED(CONFIG_DMA_BCM2835_OOB);
+}
+
 static void bcm2835_dma_start_desc(struct bcm2835_chan *c)
 {
 	struct virt_dma_desc *vd = vchan_next_desc(&c->vc);
-	struct bcm2835_desc *d;
 
 	if (!vd) {
 		c->desc = NULL;
@@ -698,7 +709,7 @@ static irqreturn_t bcm2835_dma_callback(int irq, void *data)
 	unsigned long flags;
 
 	/* check the shared interrupt */
-	if (c->irq_flags & IRQF_SHARED) {
+	if (is_base_irq_handler() && c->irq_flags & IRQF_SHARED) {
 		/* check if the interrupt is enabled */
 		flags = readl(c->chan_base + BCM2835_DMA_CS);
 		/* if not set then we are not the reason for the irq */
@@ -706,7 +717,8 @@ static irqreturn_t bcm2835_dma_callback(int irq, void *data)
 			return IRQ_NONE;
 	}
 
-	spin_lock_irqsave(&c->vc.lock, flags);
+	/* CAUTION: If running in-band, hard irqs are on. */
+	vchan_lock_irqsave(&c->vc, flags);
 
 	/*
 	 * Clear the INT flag to receive further interrupts. Keep the channel
@@ -809,7 +821,7 @@ static enum dma_status bcm2835_dma_tx_status(struct dma_chan *chan,
 	if (ret == DMA_COMPLETE || !txstate)
 		return ret;
 
-	spin_lock_irqsave(&c->vc.lock, flags);
+	vchan_lock_irqsave(&c->vc, flags);
 	vd = vchan_find_desc(&c->vc, cookie);
 	if (vd) {
 		txstate->residue =
@@ -838,7 +850,7 @@ static enum dma_status bcm2835_dma_tx_status(struct dma_chan *chan,
 		txstate->residue = 0;
 	}
 
-	spin_unlock_irqrestore(&c->vc.lock, flags);
+	vchan_unlock_irqrestore(&c->vc, flags);
 
 	return ret;
 }
@@ -848,12 +860,35 @@ static void bcm2835_dma_issue_pending(struct dma_chan *chan)
 	struct bcm2835_chan *c = to_bcm2835_dma_chan(chan);
 	unsigned long flags;
 
-	spin_lock_irqsave(&c->vc.lock, flags);
+	vchan_lock_irqsave(&c->vc, flags);
 	if (vchan_issue_pending(&c->vc) && !c->desc)
 		bcm2835_dma_start_desc(c);
 
-	spin_unlock_irqrestore(&c->vc.lock, flags);
+	vchan_unlock_irqrestore(&c->vc, flags);
 }
+
+#ifdef CONFIG_DMA_BCM2835_OOB
+static int bcm2835_dma_pulse_oob(struct dma_chan *chan)
+{
+	struct bcm2835_chan *c = to_bcm2835_dma_chan(chan);
+	unsigned long flags;
+	int ret = -EIO;
+
+	vchan_lock_irqsave(&c->vc, flags);
+	if (c->desc && vchan_oob_pulsed(&c->desc->vd)) {
+		bcm2835_dma_enable_channel(c);
+		ret = 0;
+	}
+	vchan_unlock_irqrestore(&c->vc, flags);
+
+	return ret;
+}
+#else
+static int bcm2835_dma_pulse_oob(struct dma_chan *chan)
+{
+	return -ENOTSUPP;
+}
+#endif
 
 static struct dma_async_tx_descriptor *bcm2835_dma_prep_dma_memcpy(
 	struct dma_chan *chan, dma_addr_t dst, dma_addr_t src,
@@ -897,6 +932,15 @@ static struct dma_async_tx_descriptor *bcm2835_dma_prep_slave_sg(
 		   WIDE_SOURCE(c->dreq) | WIDE_DEST(c->dreq);
 	u32 extra = BCM2835_DMA_INT_EN;
 	size_t frames;
+
+	if (!bcm2835_dma_oob_capable()) {
+		if (flags & (DMA_OOB_INTERRUPT|DMA_OOB_PULSE)) {
+			dev_err(chan->device->dev,
+				"%s: out-of-band slave transfers disabled\n",
+				__func__);
+			return NULL;
+		}
+	}
 
 	if (!is_slave_direction(direction)) {
 		dev_err(chan->device->dev,
@@ -973,7 +1017,21 @@ static struct dma_async_tx_descriptor *bcm2835_dma_prep_dma_cyclic(
 		return NULL;
 	}
 
-	if (flags & DMA_PREP_INTERRUPT)
+	if (!bcm2835_dma_oob_capable()) {
+		if (flags & DMA_OOB_INTERRUPT) {
+			dev_err(chan->device->dev,
+				"%s: out-of-band cyclic transfers disabled\n",
+				__func__);
+			return NULL;
+		}
+	} else if (flags & DMA_OOB_PULSE) {
+		dev_err(chan->device->dev,
+			"%s: no pulse mode with out-of-band cyclic transfers\n",
+			__func__);
+		return NULL;
+	}
+
+	if (flags & (DMA_PREP_INTERRUPT|DMA_OOB_INTERRUPT))
 		extra |= BCM2835_DMA_INT_EN;
 	else
 		period_len = buf_len;
@@ -1058,7 +1116,7 @@ static int bcm2835_dma_terminate_all(struct dma_chan *chan)
 	unsigned long flags;
 	LIST_HEAD(head);
 
-	spin_lock_irqsave(&c->vc.lock, flags);
+	vchan_lock_irqsave(&c->vc, flags);
 
 	/* stop DMA activity */
 	if (c->desc) {
@@ -1068,7 +1126,7 @@ static int bcm2835_dma_terminate_all(struct dma_chan *chan)
 	}
 
 	vchan_get_all_descriptors(&c->vc, &head);
-	spin_unlock_irqrestore(&c->vc.lock, flags);
+	vchan_unlock_irqrestore(&c->vc, flags);
 	vchan_dma_desc_free_list(&c->vc, &head);
 
 	return 0;
@@ -1249,11 +1307,13 @@ static int bcm2835_dma_probe(struct platform_device *pdev)
 	dma_cap_set(DMA_SLAVE, od->ddev.cap_mask);
 	dma_cap_set(DMA_PRIVATE, od->ddev.cap_mask);
 	dma_cap_set(DMA_CYCLIC, od->ddev.cap_mask);
+	dma_cap_set(DMA_OOB, od->ddev.cap_mask);
 	dma_cap_set(DMA_MEMCPY, od->ddev.cap_mask);
 	od->ddev.device_alloc_chan_resources = bcm2835_dma_alloc_chan_resources;
 	od->ddev.device_free_chan_resources = bcm2835_dma_free_chan_resources;
 	od->ddev.device_tx_status = bcm2835_dma_tx_status;
 	od->ddev.device_issue_pending = bcm2835_dma_issue_pending;
+	od->ddev.device_pulse_oob = bcm2835_dma_pulse_oob;
 	od->ddev.device_prep_dma_cyclic = bcm2835_dma_prep_dma_cyclic;
 	od->ddev.device_prep_slave_sg = bcm2835_dma_prep_slave_sg;
 	od->ddev.device_prep_dma_memcpy = bcm2835_dma_prep_dma_memcpy;
