@@ -1,0 +1,58 @@
+patching file arch/arm/include/asm/irqflags.h
+Hunk #1 FAILED at 163.
+1 out of 1 hunk FAILED -- saving rejects to file arch/arm/include/asm/irqflags.h.rej
+patching file arch/arm/kernel/Makefile
+Hunk #1 FAILED at 92.
+1 out of 1 hunk FAILED -- saving rejects to file arch/arm/kernel/Makefile.rej
+patching file arch/arm64/boot/dts/broadcom/Makefile
+Hunk #1 FAILED at 1.
+1 out of 1 hunk FAILED -- saving rejects to file arch/arm64/boot/dts/broadcom/Makefile.rej
+patching file drivers/dma/bcm2835-dma.c
+Hunk #2 succeeded at 38 (offset 1 line).
+Hunk #3 succeeded at 57 (offset 1 line).
+Hunk #4 succeeded at 70 (offset 1 line).
+Hunk #5 succeeded at 101 (offset 1 line).
+Hunk #6 succeeded at 159 (offset 1 line).
+Hunk #7 succeeded at 207 (offset 1 line).
+Hunk #8 succeeded at 350 (offset 1 line).
+Hunk #9 succeeded at 394 (offset 1 line).
+Hunk #10 succeeded at 463 (offset 1 line).
+Hunk #11 succeeded at 481 (offset 1 line).
+Hunk #12 succeeded at 517 (offset 1 line).
+Hunk #13 succeeded at 547 (offset 1 line).
+Hunk #14 succeeded at 561 (offset 1 line).
+Hunk #15 succeeded at 589 (offset 1 line).
+Hunk #16 succeeded at 602 (offset 1 line).
+Hunk #17 succeeded at 639 (offset 1 line).
+Hunk #18 succeeded at 655 (offset 1 line).
+Hunk #19 FAILED at 679.
+Hunk #20 FAILED at 707.
+Hunk #21 succeeded at 858 (offset 48 lines).
+Hunk #22 succeeded at 924 (offset 71 lines).
+Hunk #23 succeeded at 938 (offset 71 lines).
+Hunk #24 succeeded at 956 (offset 71 lines).
+Hunk #25 succeeded at 983 (offset 80 lines).
+Hunk #26 succeeded at 1005 (offset 80 lines).
+Hunk #27 succeeded at 1013 (offset 80 lines).
+Hunk #28 succeeded at 1028 (offset 80 lines).
+Hunk #29 succeeded at 1081 (offset 94 lines).
+Hunk #30 succeeded at 1110 (offset 94 lines).
+Hunk #31 succeeded at 1118 (offset 94 lines).
+Hunk #32 succeeded at 1184 (offset 94 lines).
+Hunk #33 succeeded at 1208 (offset 94 lines).
+Hunk #34 succeeded at 1282 (offset 94 lines).
+Hunk #35 succeeded at 1293 (offset 94 lines).
+Hunk #36 succeeded at 1323 (offset 94 lines).
+Hunk #37 succeeded at 1367 (offset 96 lines).
+Hunk #38 succeeded at 1384 (offset 96 lines).
+Hunk #39 FAILED at 1340.
+Hunk #40 succeeded at 1454 (offset 96 lines).
+Hunk #41 succeeded at 1487 (offset 96 lines).
+Hunk #42 succeeded at 1510 (offset 96 lines).
+3 out of 42 hunks FAILED -- saving rejects to file drivers/dma/bcm2835-dma.c.rej
+patching file drivers/irqchip/irq-bcm2835.c
+Hunk #4 FAILED at 99.
+Hunk #5 succeeded at 146 (offset 1 line).
+Hunk #6 succeeded at 186 (offset 1 line).
+Hunk #7 succeeded at 200 (offset 1 line).
+1 out of 7 hunks FAILED -- saving rejects to file drivers/irqchip/irq-bcm2835.c.rej
