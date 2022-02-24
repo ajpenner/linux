@@ -751,7 +751,7 @@ static irqreturn_t bcm2835_dma_callback(int irq, void *data)
 	 * will remain idle despite the ACTIVE flag being set.
 	 */
 	if (is_base_irq_handler())
-		writel(BCM2835_DMA_INT | BCM2835_DMA_ACTIVE,
+    	writel(BCM2835_DMA_INT | BCM2835_DMA_ACTIVE | BCM2835_DMA_CS_FLAGS(c->dreq),
 			c->chan_base + BCM2835_DMA_CS);
 
 	d = c->desc;
@@ -1436,13 +1436,17 @@ static int bcm2835_dma_probe(struct platform_device *pdev)
 		irq[i] = platform_get_irq(pdev, i < 11 ? i : 11);
 	}
 
+	chan_count = 0;
+
 	/* get irqs for each channel */
-	for (i = 0; i <= BCM2835_DMA_MAX_DMA_CHAN_SUPPORTED; i++) {
+	for (i = chan_start; i < chan_end; i++) {
 		/* skip channels without irq */
 		if (irq[i] < 0)
 			continue;
 
 		/* check if there are other channels that also use this irq */
+		/* FIXME: This will fail if interrupts are shared across
+		   instances */
 		irq_flags = IS_ENABLED(CONFIG_DMA_BCM2835_OOB) ? IRQF_OOB : 0;
 		for (j = 0; j <= BCM2835_DMA_MAX_DMA_CHAN_SUPPORTED; j++)
 			if ((i != j) && (irq[j] == irq[i])) {
