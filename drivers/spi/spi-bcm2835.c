@@ -28,6 +28,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h> /* FIXME: using chip internals */
 #include <linux/gpio/driver.h> /* FIXME: using chip internals */
+#include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <linux/spi/spi.h>
 
@@ -378,6 +379,10 @@ static irqreturn_t bcm2835_spi_interrupt(int irq, void *dev_id)
 
 	if (bs->tx_len && cs & BCM2835_SPI_CS_DONE)
 		bcm2835_wr_fifo_blind(bs, BCM2835_SPI_FIFO_SIZE);
+
+	/* check if we got interrupt enabled */
+	if (!(bcm2835_rd(bs, BCM2835_SPI_CS) & BCM2835_SPI_CS_INTR))
+		return IRQ_NONE;
 
 	/* Read as many bytes as possible from FIFO */
 	bcm2835_rd_fifo(bs);
@@ -1082,7 +1087,23 @@ static int bcm2835_spi_transfer_one_poll(struct spi_controller *ctlr,
 static unsigned long bcm2835_get_clkdiv(struct bcm2835_spi *bs, u32 spi_hz,
 					u32 *effective_speed_hz)
 {
-	unsigned long cdiv;
+	struct bcm2835_spi *bs = spi_controller_get_devdata(ctlr);
+	unsigned long spi_hz, cdiv;
+	unsigned long hz_per_byte, byte_limit;
+	u32 cs = bs->prepare_cs[spi->chip_select];
+
+	if (unlikely(!tfr->len)) {
+		static int warned;
+
+		if (!warned)
+			dev_warn(&spi->dev,
+				 "zero-length SPI transfer ignored\n");
+		warned = 1;
+		return 0;
+	}
+
+	/* set clock */
+	spi_hz = tfr->speed_hz;
 
 	if (spi_hz >= bs->clk_hz / 2) {
 		cdiv = 2; /* clk_hz/2 is the fastest we can go */
@@ -1358,6 +1379,11 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 	struct bcm2835_spi *bs;
 	int err;
 
+	if (of_gpio_named_count(pdev->dev.of_node, "cs-gpios") >
+	    BCM2835_SPI_NUM_CS)
+		return dev_err_probe(&pdev->dev, -EINVAL,
+				     "too many chip selects\n");
+
 	ctlr = devm_spi_alloc_master(&pdev->dev, ALIGN(sizeof(*bs),
 						  dma_get_cache_alignment()));
 	if (!ctlr)
@@ -1406,7 +1432,8 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 	bcm2835_wr(bs, BCM2835_SPI_CS,
 		   BCM2835_SPI_CS_CLEAR_RX | BCM2835_SPI_CS_CLEAR_TX);
 
-	err = devm_request_irq(&pdev->dev, bs->irq, bcm2835_spi_interrupt, 0,
+	err = devm_request_irq(&pdev->dev, bs->irq, bcm2835_spi_interrupt,
+			       IRQF_SHARED,
 			       dev_name(&pdev->dev), bs);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);

@@ -97,6 +97,7 @@ obj-$(CONFIG_RAW_PRINTK)	+= raw_printk.o
 endif
 
 obj-$(CONFIG_IRQ_PIPELINE)	+= irq_pipeline.o
+obj-$(CONFIG_ARM_PATCH_PHYS_VIRT)	+= phys2virt.o
 
 # This is executed very early using a temporary stack when no memory allocator
 # nor global data is available. Everything has to be allocated on the stack.
