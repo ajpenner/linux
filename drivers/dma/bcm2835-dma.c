@@ -680,6 +680,7 @@ static inline bool bcm2835_dma_oob_capable(void)
 static void bcm2835_dma_start_desc(struct bcm2835_chan *c)
 {
 	struct virt_dma_desc *vd = vchan_next_desc(&c->vc);
+	struct bcm2835_desc *d;
 
 	if (!vd) {
 		c->desc = NULL;
@@ -688,9 +689,20 @@ static void bcm2835_dma_start_desc(struct bcm2835_chan *c)
 
 	list_del(&vd->node);
 
-	c->desc = to_bcm2835_dma_desc(&vd->tx);
+	c->desc = d = to_bcm2835_dma_desc(&vd->tx);
 	if (!bcm2835_dma_oob_capable() || !vchan_oob_pulsed(vd))
 		bcm2835_dma_enable_channel(c);
+
+	if (c->is_40bit_channel) {
+		writel(to_bcm2711_cbaddr(d->cb_list[0].paddr),
+		       c->chan_base + BCM2711_DMA40_CB);
+		writel(BCM2711_DMA40_ACTIVE | BCM2711_DMA40_CS_FLAGS(c->dreq),
+		       c->chan_base + BCM2711_DMA40_CS);
+	} else {
+		writel(d->cb_list[0].paddr, c->chan_base + BCM2835_DMA_ADDR);
+		writel(BCM2835_DMA_ACTIVE | BCM2835_DMA_CS_FLAGS(c->dreq),
+		       c->chan_base + BCM2835_DMA_CS);
+	}
 }
 
 static bool do_channel(struct bcm2835_chan *c, struct bcm2835_desc *d)
@@ -723,18 +735,6 @@ static bool do_channel(struct bcm2835_chan *c, struct bcm2835_desc *d)
 static inline bool is_base_irq_handler(void)
 {
 	return !bcm2835_dma_oob_capable() || running_oob();
-    /*
-	if (c->is_40bit_channel) {
-		writel(to_bcm2711_cbaddr(d->cb_list[0].paddr),
-		       c->chan_base + BCM2711_DMA40_CB);
-		writel(BCM2711_DMA40_ACTIVE | BCM2711_DMA40_CS_FLAGS(c->dreq),
-		       c->chan_base + BCM2711_DMA40_CS);
-	} else {
-		writel(d->cb_list[0].paddr, c->chan_base + BCM2835_DMA_ADDR);
-		writel(BCM2835_DMA_ACTIVE | BCM2835_DMA_CS_FLAGS(c->dreq),
-		       c->chan_base + BCM2835_DMA_CS);
-	}
-    */
 }
 
 static irqreturn_t bcm2835_dma_callback(int irq, void *data)

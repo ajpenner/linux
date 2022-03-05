@@ -1087,23 +1087,7 @@ static int bcm2835_spi_transfer_one_poll(struct spi_controller *ctlr,
 static unsigned long bcm2835_get_clkdiv(struct bcm2835_spi *bs, u32 spi_hz,
 					u32 *effective_speed_hz)
 {
-	struct bcm2835_spi *bs = spi_controller_get_devdata(ctlr);
-	unsigned long spi_hz, cdiv;
-	unsigned long hz_per_byte, byte_limit;
-	u32 cs = bs->prepare_cs[spi->chip_select];
-
-	if (unlikely(!tfr->len)) {
-		static int warned;
-
-		if (!warned)
-			dev_warn(&spi->dev,
-				 "zero-length SPI transfer ignored\n");
-		warned = 1;
-		return 0;
-	}
-
-	/* set clock */
-	spi_hz = tfr->speed_hz;
+	unsigned long cdiv;
 
 	if (spi_hz >= bs->clk_hz / 2) {
 		cdiv = 2; /* clk_hz/2 is the fastest we can go */
