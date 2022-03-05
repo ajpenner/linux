@@ -21,14 +21,3 @@
  {
  	return flags & IRQMASK_I_BIT;
  }
- 
-+static inline bool native_irqs_disabled(void)
-+{
-+	unsigned long flags = native_save_flags();
-+	return native_irqs_disabled_flags(flags);
-+}
-+
-+#include <asm/irq_pipeline.h>
- #include <asm-generic/irqflags.h>
- 
- #endif /* ifdef __KERNEL__ */
